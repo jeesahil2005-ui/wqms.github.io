@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Water Quality Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: #e6f2ff;
+      padding: 30px;
+    }
+    h1 {
+      color: #004080;
+    }
+    .status {
+      margin: 10px;
+      font-weight: bold;
+    }
+    .data-box {
+      font-size: 1.2em;
+      margin: 15px;
+      padding: 15px;
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      display: inline-block;
+      min-width: 150px;
+    }
+    .ok { color: green; }
+    .warn { color: red; font-weight: bold; }
+    button {
+      font-size: 1em;
+      padding: 10px 20px;
+      margin-top: 20px;
+      cursor: pointer;
+      background: #004080;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+    }
+    canvas {
+      margin-top: 30px;
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>💧 Water Quality Monitor</h1>
+  <div class="status" id="status">🔴 Disconnected</div>
+
+  <div class="data-box">🌡 Temperature: <span id="temp">--</span> °C</div>
+  <div class="data-box">⚖ pH Level: <span id="ph">--</span></div>
+  <div class="data-box">🌫 Turbidity: <span id="turbidity">--</span> NTU</div>
+  <div class="data-box">💦 TDS: <span id="tds">--</span> ppm</div>
+
+  <br>
+  <button onclick="connectSerial()">Connect to Arduino</button>
+
+  <canvas id="chart" width="600" height="300"></canvas>
+
+  <script>
+    let port, reader;
+    const labels = [];
+    const dataValues = {
+      temperature: [],
+      ph: [],
+      turbidity: [],
+      tds: []
+    };
+
+    // Chart.js setup
+    const ctx = document.getElementById('chart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'Temperature (°C)', data: dataValues.temperature, borderColor: 'red', fill: false },
+          { label: 'pH', data: dataValues.ph, borderColor: 'blue', fill: false },
+          { label: 'Turbidity (NTU)', data: dataValues.turbidity, borderColor: 'green', fill: false },
+          { label: 'TDS (ppm)', data: dataValues.tds, borderColor: 'orange', fill: false }
+        ]
+      },
+      options: {
+        responsive: true,
+        animation: false,
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+
+    async function connectSerial() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 9600 });
+
+        const decoder = new TextDecoderStream();
+        port.readable.pipeTo(decoder.writable);
+        reader = decoder.readable.getReader();
+
+        document.getElementById('status').innerHTML = "🟢 Connected";
+
+        readLoop();
+      } catch (err) {
+        alert('Serial connection failed: ' + err);
+      }
+    }
+
+    async function readLoop() {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          try {
+            const data = JSON.parse(value.trim());
+
+            updateDisplay('temp', data.temperature);
+            updateDisplay('ph', data.ph, v => (v < 6.5 || v > 8.5));
+            updateDisplay('turbidity', data.turbidity, v => v > 5);
+            updateDisplay('tds', data.tds, v => v > 500);
+
+            // Update chart
+            labels.push(new Date().toLocaleTimeString());
+            if (labels.length > 10) labels.shift();
+
+            dataValues.temperature.push(data.temperature);
+            dataValues.ph.push(data.ph);
+            dataValues.turbidity.push(data.turbidity);
+            dataValues.tds.push(data.tds);
+
+            if (dataValues.temperature.length > 10) {
+              dataValues.temperature.shift();
+              dataValues.ph.shift();
+              dataValues.turbidity.shift();
+              dataValues.tds.shift();
+            }
+
+            chart.update();
+          } catch (e) {
+            console.log("Invalid data:", value);
+          }
+        }
+      }
+    }
+
+    function updateDisplay(id, value, isWarn = () => false) {
+      const span = document.getElementById(id);
+      span.textContent = value;
+      span.className = isWarn(value) ? "warn" : "ok";
+    }
+  </script>
+</body>
+</html>
